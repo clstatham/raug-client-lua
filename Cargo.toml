@@ -7,7 +7,14 @@ edition = "2024"
 anyhow = "1.0.98"
 clap = { version = "4.5.37", features = ["derive"] }
 convert_case = "0.8.0"
-mlua = { version = "0.10.3", features = ["lua54", "vendored", "send", "anyhow", "macros", "async"] }
+mlua = { version = "0.10.3", features = [
+    "lua54",
+    "vendored",
+    "send",
+    "anyhow",
+    "macros",
+    "async",
+] }
 raug = { path = "../raug" }
 raug-ext = { path = "../raug-ext" }
 raug-server = { path = "../raug-server" }

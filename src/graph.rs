@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 
 use anyhow::Result;
-use mlua::{FromLua, UserData, UserDataRef, Value};
+use mlua::{FromLua, Lua, UserData, Value};
 use raug::graph::NodeIndex;
 use raug_server::graph::{GraphOp, NameOrIndex};
 
@@ -23,21 +23,19 @@ async fn binary_op(
 
     let target = *resp.as_node_index().unwrap();
 
-    let op = GraphOp::Connect {
+    let op0 = GraphOp::Connect {
         source: lhs,
         source_output: lhs_output,
         target,
         target_input: NameOrIndex::Index(0),
     };
-    client.request(op).await?;
-
-    let op = GraphOp::Connect {
+    let op1 = GraphOp::Connect {
         source: rhs,
         source_output: rhs_output,
         target,
         target_input: NameOrIndex::Index(1),
     };
-    client.request(op).await?;
+    tokio::try_join!(client.request(op0), client.request(op1))?;
 
     Ok(LuaNode {
         client: Arc::downgrade(&client),
@@ -45,7 +43,11 @@ async fn binary_op(
     })
 }
 
-async fn value_to_output(client: Arc<Client>, value: Value) -> Result<(NodeIndex, NameOrIndex)> {
+async fn value_to_output(
+    _lua: &Lua,
+    client: Arc<Client>,
+    value: Value,
+) -> Result<(NodeIndex, NameOrIndex)> {
     match value {
         Value::Integer(value) => {
             let value = value as f32;
@@ -65,10 +67,10 @@ async fn value_to_output(client: Arc<Client>, value: Value) -> Result<(NodeIndex
             } else if let Ok(value) = value.borrow::<LuaNode>() {
                 Ok((value.index, NameOrIndex::Index(0)))
             } else {
-                Err(mlua::Error::runtime("Invalid rhs").into())
+                Err(mlua::Error::runtime("Invalid rhs (userdata)").into())
             }
         }
-        _ => Err(mlua::Error::runtime("Invalid rhs").into()),
+        value => Err(mlua::Error::runtime(format!("Invalid rhs: {:?}", value)).into()),
     }
 }
 
@@ -80,22 +82,42 @@ pub struct LuaNode {
 
 impl UserData for LuaNode {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method("__index", move |lua, this, key: Value| match key {
-            Value::Integer(v) => Ok(lua.create_userdata(LuaOutput {
+        methods.add_async_method_mut(
+            "replace",
+            move |lua, mut this, replacement: Value| async move {
+                let client = this.client.upgrade().unwrap();
+                let (replacement, _) = value_to_output(&lua, client.clone(), replacement).await?;
+                let node = client
+                    .request(GraphOp::ReplaceNode {
+                        target: this.index,
+                        replacement,
+                    })
+                    .await?;
+                let node = *node.as_node_index().unwrap();
+                this.index = node;
+                Ok(LuaNode {
+                    client: Arc::downgrade(&client),
+                    index: node,
+                })
+            },
+        );
+
+        methods.add_meta_method("__index", move |_lua, this, key: Value| match key {
+            Value::Integer(v) => Ok(LuaOutput {
                 client: this.client.clone(),
                 node: this.index,
                 output: NameOrIndex::Index(v as u32),
-            })),
-            Value::String(v) => Ok(lua.create_userdata(LuaOutput {
+            }),
+            Value::String(v) => Ok(LuaOutput {
                 client: this.client.clone(),
                 node: this.index,
                 output: NameOrIndex::Name(v.to_string_lossy()),
-            })),
+            }),
             _ => Err(mlua::Error::runtime("Invalid index")),
         });
-        methods.add_async_meta_method("__add", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__add", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res = binary_op(
                 "Add",
                 client,
@@ -107,9 +129,9 @@ impl UserData for LuaNode {
             .await?;
             Ok(res)
         });
-        methods.add_async_meta_method("__sub", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__sub", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res = binary_op(
                 "Sub",
                 client,
@@ -121,9 +143,9 @@ impl UserData for LuaNode {
             .await?;
             Ok(res)
         });
-        methods.add_async_meta_method("__mul", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__mul", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res = binary_op(
                 "Mul",
                 client,
@@ -135,9 +157,9 @@ impl UserData for LuaNode {
             .await?;
             Ok(res)
         });
-        methods.add_async_meta_method("__div", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__div", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res = binary_op(
                 "Div",
                 client,
@@ -161,30 +183,30 @@ pub struct LuaOutput {
 
 impl UserData for LuaOutput {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_meta_method("__add", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__add", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res =
                 binary_op("Add", client, lhs.node, lhs.output.clone(), rhs, rhs_output).await?;
             Ok(res)
         });
-        methods.add_async_meta_method("__sub", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__sub", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res =
                 binary_op("Sub", client, lhs.node, lhs.output.clone(), rhs, rhs_output).await?;
             Ok(res)
         });
-        methods.add_async_meta_method("__mul", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__mul", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res =
                 binary_op("Mul", client, lhs.node, lhs.output.clone(), rhs, rhs_output).await?;
             Ok(res)
         });
-        methods.add_async_meta_method("__div", move |_lua, lhs, rhs: Value| async move {
+        methods.add_async_meta_method("__div", move |lua, lhs, rhs: Value| async move {
             let client = lhs.client.upgrade().unwrap();
-            let (rhs, rhs_output) = value_to_output(client.clone(), rhs).await?;
+            let (rhs, rhs_output) = value_to_output(&lua, client.clone(), rhs).await?;
             let res =
                 binary_op("Div", client, lhs.node, lhs.output.clone(), rhs, rhs_output).await?;
             Ok(res)

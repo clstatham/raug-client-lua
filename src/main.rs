@@ -22,17 +22,23 @@ async fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
     let client = Client::bind(args.local_addr, args.remote_addr).await?;
+
     client
         .exec(
             r#"
-            
-        local sine = sine_oscillator(440) * 0.1
-        dac(sine)
-        dac(sine)
+                    local sine = sine_oscillator(220)
+                    local mix = sine * 0.1
+                    dac(mix)
+                    dac(mix)
 
-        play()
+                    play()
+                    sleep(1)
+                    sine:replace(bl_saw_oscillator(110))
+                    sleep(1)
+                    stop()
 
-    "#,
+                "#
+            .trim(),
         )
         .await?;
 

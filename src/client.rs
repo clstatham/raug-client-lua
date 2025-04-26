@@ -1,6 +1,7 @@
 use std::{
     net::SocketAddr,
     sync::{Arc, Weak},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -50,6 +51,30 @@ impl Client {
         )?;
 
         this.lua.globals().set(
+            "stop",
+            this.lua.create_async_function({
+                let client = this.clone();
+                move |_lua, _: ()| {
+                    let client = client.clone();
+                    async move {
+                        client.request(GraphOp::Stop).await?;
+                        Ok(())
+                    }
+                }
+            })?,
+        )?;
+
+        this.lua.globals().set(
+            "sleep",
+            this.lua.create_async_function({
+                move |_lua, duration: f64| async move {
+                    tokio::time::sleep(Duration::from_secs_f64(duration)).await;
+                    Ok(())
+                }
+            })?,
+        )?;
+
+        this.lua.globals().set(
             "dac",
             this.lua.create_async_function({
                 let client = this.clone();
@@ -67,7 +92,7 @@ impl Client {
             })?,
         )?;
 
-        this.register_lua_procs(["SineOscillator"])?;
+        this.register_lua_procs(["SineOscillator", "BlSawOscillator"])?;
 
         Ok(this)
     }
