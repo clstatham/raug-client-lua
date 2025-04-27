@@ -26,14 +26,11 @@ async fn main() -> Result<()> {
     client
         .exec(
             r#"
-                    local sine = sine_oscillator(220)
-                    local mix = sine * 0.1
-                    dac(mix)
-                    dac(mix)
+                    mix[1] = function()
+                        return sine_oscillator(440) * 0.1
+                    end
 
                     play()
-                    sleep(1)
-                    sine:replace(bl_saw_oscillator(110))
                     sleep(1)
                     stop()
 

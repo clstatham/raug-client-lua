@@ -21,3 +21,9 @@ raug-server = { path = "../raug-server" }
 thiserror = "2.0.12"
 tokio = { version = "1.44.2", features = ["full"] }
 env_logger = "0.11.8"
+# full_moon = { version = "2.0.0", default-features = false, features = [
+#     "lua52",
+#     "lua53",
+#     "lua54",
+# ] }
+rustc-hash = "2.1.1"
