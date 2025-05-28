@@ -2,7 +2,7 @@ use std::sync::{Arc, Weak};
 
 use anyhow::Result;
 use mlua::{FromLua, MultiValue, UserData, Value};
-use raug::graph::NodeIndex;
+use raug_graph::graph::NodeIndex;
 use raug_server::graph::{GraphOp, NameOrIndex};
 
 use crate::client::Client;

@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use convert_case::{Case, Casing};
 use mlua::*;
-use raug::graph::NodeIndex;
+use raug_graph::graph::NodeIndex;
 use raug_server::graph::{GraphOp, GraphOpResponse, NameOrIndex};
 use tokio::net::{ToSocketAddrs, UdpSocket};
 
